@@ -1,0 +1,1288 @@
+{
+  "name": "AI Email Processing & Document Intelligence Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {
+          "q": "subject:(factura OR facturas) has:attachment is:unread"
+        }
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -832,
+        80
+      ],
+      "id": "2e0eab2a-61fe-436b-915c-89aaff29cf18",
+      "name": "Gmail — Watch Incoming Emails"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "messageId": "={{ $json.id }}",
+        "simple": false,
+        "options": {
+          "dataPropertyAttachmentsPrefixName": "attachment_",
+          "downloadAttachments": true
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -624,
+        80
+      ],
+      "id": "20be1bfe-8965-4368-88e5-5d291cd3384d",
+      "name": "Gmail — Retrieve Full Email Data"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Obtener todos los attachments del item\nconst item = items[0];\nconst attachments = [];\n\n// Buscar todos los campos que empiezan con \"attachment_\"\nfor (const key in item.binary) {\n  if (key.startsWith('attachment_')) {\n    attachments.push({\n      json: {\n        fileName: item.binary[key].fileName,\n        mimeType: item.binary[key].mimeType,\n        fileExtension: item.binary[key].fileExtension,\n        fileSize: item.binary[key].fileSize\n      },\n      binary: {\n        data: item.binary[key]\n      }\n    });\n  }\n}\n\n// Retornar un item por cada adjunto\nreturn attachments;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        80
+      ],
+      "id": "c23f844f-f2ba-4fe6-ad64-b9c6e4bfc167",
+      "name": "Preprocess Email Data"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.mimeType }}",
+                    "rightValue": "(pdf|image)",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    },
+                    "id": "9eed7044-675b-409d-99aa-18218a6475b6"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "61423ceb-2bcf-41e5-9081-ec6463ec13b6",
+                    "leftValue": "={{ $json.mimeType }}",
+                    "rightValue": "wordprocessingml",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "90a68837-851d-4c9d-a97e-bfdc2cfe4b15",
+                    "leftValue": "={{ $json.mimeType }}",
+                    "rightValue": "spreadsheetml",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -208,
+        80
+      ],
+      "id": "a6fdf904-0e81-497a-82b2-2e715854628e",
+      "name": "Classify Email Type"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.ocr.space/parse/image",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "={{ $binary.data }}"
+            },
+            {
+              "name": "language",
+              "value": "spa"
+            },
+            {
+              "name": "isTable",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "03a4ef5e-717b-4594-ace1-01db6600a2a6",
+      "name": "OCR — Extract Text from Attachment"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Procesar TODOS los items, no solo el primero\nconst outputs = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  let texto = \"\";\n  \n  // Intentar obtener fileName del binary data\n  let fileName = \"sin_nombre\";\n  if (item.binary && item.binary.data && item.binary.data.fileName) {\n    fileName = item.binary.data.fileName;\n  }\n  \n  // CASO 1: OCR exitoso\n  if (item.json.ParsedResults && item.json.ParsedResults[0]) {\n    const result = item.json.ParsedResults[0];\n    if (result.ParsedText && result.ParsedText.trim() !== \"\") {\n      texto = result.ParsedText;\n    } else if (result.ErrorMessage) {\n      outputs.push({ \n        json: { \n          ParsedText: \"ERROR_OCR: \" + result.ErrorMessage, \n          fileName, \n          error: true \n        },\n        binary: item.binary\n      });\n      continue;\n    }\n  }\n  \n  // Si no hay texto, retornar error\n  if (!texto || texto.trim() === \"\") {\n    outputs.push({ \n      json: { \n        ParsedText: \"ERROR: No se pudo extraer texto\", \n        fileName, \n        error: true \n      },\n      binary: item.binary\n    });\n    continue;\n  }\n  \n  outputs.push({ \n    json: { \n      ParsedText: texto, \n      fileName \n    }, \n    binary: item.binary \n  });\n}\n\nreturn outputs;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "a8fea72d-decd-458d-bb84-ac3a28045bd5",
+      "name": "Process OCR Response1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Eres un sistema experto en clasificación contable de facturas.\n\nREGLAS DE CLASIFICACIÓN:\n\n1. ACREEDOR (Gastos - nosotros PAGAMOS):\n   - Facturas de proveedores, servicios contratados, compras\n   - Alquileres, luz, agua, internet, teléfono, gas\n   - Impuestos (IVA, IIBB, municipales, ingresos brutos)\n   - Suministros, materiales, mercadería\n   - Servicios profesionales (abogado, contador, consultor)\n   - Indicadores: \"proveedor\", \"debe\", \"a pagar\", \"vencimiento\"\n\n2. DEUDOR (Ingresos - nos PAGAN):\n   - Facturas emitidas a clientes\n   - Ventas de productos o servicios\n   - Honorarios profesionales cobrados\n   - Indicadores: \"cliente\", \"haber\", \"a cobrar\", \"CAE\", \"AFIP\"\n\nCATEGORÍAS:\n- servicios: luz, agua, internet, teléfono\n- alquileres: oficina, local, depósito\n- impuestos: IVA, IIBB, municipales\n- proveedores: compras de mercadería\n- clientes: ventas de productos/servicios\n- profesionales: contador, abogado\n- otros: cuando no encaje\n\nAnaliza esta factura y extrae los datos en formato JSON:\n\n{\n  \"tipo\": \"ACREEDOR o DEUDOR\",\n  \"categoria\": \"servicios/alquileres/impuestos/proveedores/clientes/profesionales/otros\",\n  \"razon_clasificacion\": \"por qué se clasificó así\",\n  \"proveedor_o_cliente\": \"nombre completo\",\n  \"cuit_dni\": \"número si aparece, sino null\",\n  \"fecha_emision\": \"YYYY-MM-DD\",\n  \"fecha_vencimiento\": \"YYYY-MM-DD o null\",\n  \"numero_factura\": \"número completo\",\n  \"tipo_comprobante\": \"Factura A/B/C/Recibo/etc\",\n  \"concepto\": \"descripción breve\",\n  \"base_imponible\": 0.00,\n  \"iva_21\": 0.00,\n  \"iva_10_5\": 0.00,\n  \"otros_impuestos\": 0.00,\n  \"total\": 0.00,\n  \"moneda\": \"EUR\",\n  \"estado_pago\": \"pendiente/pagada/vencida\",\n  \"metodo_pago\": \"transferencia/efectivo/tarjeta o null\"\n}\n\nIMPORTANTE:\n- Si dice \"CAE\" o \"AFIP\", es factura emitida (DEUDOR)\n- Todos los montos sin símbolos de moneda\n- Fechas SIEMPRE YYYY-MM-DD\n- Si falta un campo, usar null\n\nTEXTO DE LA FACTURA:\n{{ $json.ParsedText }}\n\nResponde SOLO con el JSON, sin texto adicional."
+            }
+          ]
+        },
+        "simplify": false,
+        "jsonOutput": true,
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        368,
+        0
+      ],
+      "id": "68243406-cca6-47f9-bb48-58e6e0115548",
+      "name": "AI — Analyze Document Content"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Procesar TODAS las facturas (múltiples items)\nconst results = [];\n\nfor (const item of items) {\n  let data;\n  \n  try {\n    // Parsear respuesta de Gemini\n    const geminiResponse = item.json.candidates[0].content.parts[0].text;\n    data = JSON.parse(geminiResponse);\n  } catch (error) {\n    results.push({\n      json: {\n        error: true,\n        tipo: \"REVISAR_MANUAL\",\n        observaciones: \"Error al parsear JSON de Gemini: \" + error.message,\n        respuesta_raw: JSON.stringify(item.json)\n      }\n    });\n    continue; // Pasar a la siguiente factura\n  }\n\n  // VALIDACIONES\n\n  // 1. Validar tipo\n  if (!['ACREEDOR', 'DEUDOR'].includes(data.tipo)) {\n    data.tipo = 'REVISAR_MANUAL';\n    data.observaciones = (data.observaciones || '') + ' | Tipo inválido';\n  }\n\n  // 2. Validar monto\n  if (!data.total || data.total <= 0) {\n    data.tipo = 'REVISAR_MANUAL';\n    data.observaciones = (data.observaciones || '') + ' | Total inválido';\n  }\n\n  // 3. Validar fecha\n  const fechaRegex = /^\\d{4}-\\d{2}-\\d{2}$/;\n  if (!data.fecha_emision || !fechaRegex.test(data.fecha_emision)) {\n    data.observaciones = (data.observaciones || '') + ' | Fecha inválida';\n  }\n\n  // 4. Estado de pago automático\n  if (data.fecha_vencimiento) {\n    const hoy = new Date();\n    const vencimiento = new Date(data.fecha_vencimiento);\n    if (vencimiento < hoy && data.estado_pago === 'pendiente') {\n      data.estado_pago = 'vencida';\n    }\n  }\n\n  // 5. Metadatos del sistema\n  data.fecha_procesamiento = new Date().toISOString();\n  data.archivo_original = 'factura_' + (results.length + 1);\n\n  // 6. Calcular totales si faltan (verificación)\n  if (data.base_imponible && data.iva_21) {\n    const totalCalculado = parseFloat(data.base_imponible) + \n                           parseFloat(data.iva_21) + \n                           parseFloat(data.iva_10_5 || 0) + \n                           parseFloat(data.otros_impuestos || 0);\n    \n    // Verificar coherencia (margen de 1€ por redondeos)\n    if (Math.abs(totalCalculado - data.total) > 1) {\n      data.observaciones = (data.observaciones || '') + ' | Revisar cálculo de montos (diferencia: ' + (totalCalculado - data.total).toFixed(2) + ')';\n    }\n  }\n\n  // Agregar factura procesada al array de resultados\n  results.push({ json: data });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        0
+      ],
+      "id": "d3ce7a63-5180-4183-9cd9-d1523081a4f1",
+      "name": "Prepare Structured Data"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.tipo }}",
+                    "rightValue": "ACREEDOR",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "97047e91-0647-4642-accb-b2f73f758d0d"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "15ad2916-892d-4fc4-ba24-8b24decb51af",
+                    "leftValue": "={{ $json.tipo }}",
+                    "rightValue": "DEUDOR",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "526310fd-b6ed-4da4-a3f8-2cf649a95a86",
+                    "leftValue": "={{ $json.tipo }}",
+                    "rightValue": "REVISAR_MANUAL",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        864,
+        0
+      ],
+      "id": "3a2f7b13-5306-45e3-a557-bf2287df26f1",
+      "name": "Validate Processing Result"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_YOUR_SHEET_URL",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 577071543,
+          "mode": "list",
+          "cachedResultName": "Gastos",
+          "cachedResultUrl": "REPLACE_WITH_YOUR_SHEET_URL"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Fecha Emisión ": "={{ $json.fecha_emision }}",
+            "Fecha Vencimiento ": "={{ $json.fecha_vencimiento }}",
+            "Proveedor/Cliente ": "={{ $json.proveedor_o_cliente }}",
+            "CUIT/DNI ": "={{ $json.cuit_dni }}",
+            "Categoría ": "={{ $json.categoria }}",
+            "Número Factura ": "={{ $json.numero_factura }}",
+            "Tipo Comprobante ": "={{ $json.tipo_comprobante }}",
+            "Concepto ": "={{ $json.concepto }}",
+            "Base Imponible ": "={{ $json.base_imponible }}",
+            "IVA 21% ": "={{ $json.iva_21 }}",
+            "IVA 10.5% ": "={{ $json.iva_10_5 }}",
+            "Otros Impuestos ": "={{ $json.otros_impuestos }}",
+            "Total ": "={{ $json.total }}",
+            "Moneda  ": "={{ $json.moneda }}",
+            "Estado Pago  ": "={{ $json.estado_pago }}",
+            "Método Pago ": "={{ $json.metodo_pago }}",
+            "Fecha Procesamiento ": "={{ $json.fecha_procesamiento }}",
+            "Archivo Original ": "={{ $json.archivo_original }}",
+            "Observaciones": "={{ $json.razon_clasificacion }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Fecha Emisión ",
+              "displayName": "Fecha Emisión ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Fecha Vencimiento ",
+              "displayName": "Fecha Vencimiento ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Proveedor/Cliente ",
+              "displayName": "Proveedor/Cliente ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "CUIT/DNI ",
+              "displayName": "CUIT/DNI ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Categoría ",
+              "displayName": "Categoría ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Número Factura ",
+              "displayName": "Número Factura ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Tipo Comprobante ",
+              "displayName": "Tipo Comprobante ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Concepto ",
+              "displayName": "Concepto ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Base Imponible ",
+              "displayName": "Base Imponible ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "IVA 21% ",
+              "displayName": "IVA 21% ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "IVA 10.5% ",
+              "displayName": "IVA 10.5% ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Otros Impuestos ",
+              "displayName": "Otros Impuestos ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Total ",
+              "displayName": "Total ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Moneda  ",
+              "displayName": "Moneda  ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Estado Pago  ",
+              "displayName": "Estado Pago  ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Método Pago ",
+              "displayName": "Método Pago ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Fecha Procesamiento ",
+              "displayName": "Fecha Procesamiento ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Archivo Original ",
+              "displayName": "Archivo Original ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Observaciones",
+              "displayName": "Observaciones",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1152,
+        -112
+      ],
+      "id": "e6857082-7bca-4be5-a8b0-1c7ded8118c6",
+      "name": "Google Drive — Save Attachment"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_YOUR_SHEET_URL",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 943098537,
+          "mode": "list",
+          "cachedResultName": "Ingresos",
+          "cachedResultUrl": "REPLACE_WITH_YOUR_SHEET_URL"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Fecha Emisión ": "={{$json.fecha_emision}}",
+            "Fecha Vencimiento ": "={{$json.fecha_vencimiento}}",
+            "Proveedor/Cliente ": "={{$json.proveedor_o_cliente}}",
+            "CUIT/DNI ": "={{$json.cuit_dni}}",
+            "Categoría ": "={{$json.categoria}}",
+            "Número Factura ": "={{$json.numero_factura}}",
+            "Tipo Comprobante ": "={{$json.tipo_comprobante}}",
+            "Concepto ": "={{$json.concepto}}",
+            "Base Imponible ": "={{$json.base_imponible}}",
+            "IVA 21% ": "={{$json.iva_21}}",
+            "IVA 10.5% ": "={{$json.iva_10_5}}",
+            "Otros Impuestos ": "={{$json.otros_impuestos}}",
+            "Total ": "={{ $json.total }}",
+            "Moneda  ": "={{$json.moneda}}",
+            "Estado Pago  ": "={{$json.estado_pago}}",
+            "Método Pago ": "={{$json.metodo_pago}}",
+            "Fecha Procesamiento ": "={{$json.fecha_procesamiento}}",
+            "Archivo Original ": "={{$json.archivo_original}}",
+            "Observaciones": "={{$json.razon_clasificacion}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Fecha Emisión ",
+              "displayName": "Fecha Emisión ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Fecha Vencimiento ",
+              "displayName": "Fecha Vencimiento ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Proveedor/Cliente ",
+              "displayName": "Proveedor/Cliente ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "CUIT/DNI ",
+              "displayName": "CUIT/DNI ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Categoría ",
+              "displayName": "Categoría ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Número Factura ",
+              "displayName": "Número Factura ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tipo Comprobante ",
+              "displayName": "Tipo Comprobante ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Concepto ",
+              "displayName": "Concepto ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Base Imponible ",
+              "displayName": "Base Imponible ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "IVA 21% ",
+              "displayName": "IVA 21% ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "IVA 10.5% ",
+              "displayName": "IVA 10.5% ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Otros Impuestos ",
+              "displayName": "Otros Impuestos ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Total ",
+              "displayName": "Total ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Moneda  ",
+              "displayName": "Moneda  ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Estado Pago  ",
+              "displayName": "Estado Pago  ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Método Pago ",
+              "displayName": "Método Pago ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Fecha Procesamiento ",
+              "displayName": "Fecha Procesamiento ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Archivo Original ",
+              "displayName": "Archivo Original ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Observaciones",
+              "displayName": "Observaciones",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1152,
+        48
+      ],
+      "id": "990f0971-7545-49a0-afc9-c25563e11922",
+      "name": "Google Sheets — Register Processed Document"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_YOUR_SHEET_URL",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2066404431,
+          "mode": "list",
+          "cachedResultName": "Revisar Manual",
+          "cachedResultUrl": "REPLACE_WITH_YOUR_SHEET_URL"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Fecha Emisión ",
+              "displayName": "Fecha Emisión ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Fecha Vencimiento ",
+              "displayName": "Fecha Vencimiento ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Proveedor/Cliente ",
+              "displayName": "Proveedor/Cliente ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "CUIT/DNI ",
+              "displayName": "CUIT/DNI ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Categoría ",
+              "displayName": "Categoría ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Número Factura ",
+              "displayName": "Número Factura ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tipo Comprobante ",
+              "displayName": "Tipo Comprobante ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Concepto ",
+              "displayName": "Concepto ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Base Imponible ",
+              "displayName": "Base Imponible ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "IVA 21% ",
+              "displayName": "IVA 21% ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "IVA 10.5% ",
+              "displayName": "IVA 10.5% ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Otros Impuestos ",
+              "displayName": "Otros Impuestos ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Total ",
+              "displayName": "Total ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Moneda  ",
+              "displayName": "Moneda  ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Estado Pago  ",
+              "displayName": "Estado Pago  ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Método Pago ",
+              "displayName": "Método Pago ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Fecha Procesamiento ",
+              "displayName": "Fecha Procesamiento ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Archivo Original ",
+              "displayName": "Archivo Original ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Observaciones",
+              "displayName": "Observaciones",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1168,
+        224
+      ],
+      "id": "4ee51eb9-7532-497a-b9f8-155319301467",
+      "name": "Google Sheets — Register Empty / Error Document"
+    },
+    {
+      "parameters": {
+        "content": "## EMAIL TRIGGER\nMonitors incoming Gmail emails automatically.\n\nThis node triggers the workflow whenever a new email is received, allowing real-time processing of business communications and documents.",
+        "width": 320
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -928,
+        -128
+      ],
+      "typeVersion": 1,
+      "id": "85a93af0-9399-4827-8772-66f411934ac5",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## Monitors incoming Gmail emails automatically.\n\nRetrieves full email content and prepares structured data.\n\nExtracts:\n\n• Subject\n• Sender\n• Body\n• Attachments metadata\n\nThis prepares the data for classification and document processing.\n",
+        "width": 416
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -688,
+        272
+      ],
+      "typeVersion": 1,
+      "id": "1b3db6ba-b33b-470a-af8f-23c97e7bc9e7",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "## EMAIL CLASSIFICATION\nClassifies email type based on attachments.\nPossible paths:\n\n• Email with document attachment\n• Email without attachment\n• Other email types\n\nThis ensures only relevant documents are processed.\n",
+        "height": 208,
+        "width": 448
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -448,
+        -176
+      ],
+      "typeVersion": 1,
+      "id": "237e2c49-e6d1-4796-8b8f-1854c5c6ff1c",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "## OCR DOCUMENT PROCESSING\nExtracts text from document attachments using OCR API.\nSupports:\n\n• PDF\n• Images\n\nConverts unstructured files into readable text for AI analysis.\n",
+        "height": 208,
+        "width": 464
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        160,
+        -224
+      ],
+      "typeVersion": 1,
+      "id": "bf5c6356-fb4e-41d7-94f9-c2db4d78bf68",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "## AI CONTENT ANALYSIS\nAnalyzes extracted text using generative AI.\n\nGenerates structured insights from document content, enabling intelligent automation and data extraction.\n",
+        "width": 320
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        672,
+        -192
+      ],
+      "typeVersion": 1,
+      "id": "81869f67-00e5-4032-a5a8-435dba5d0855",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "## DATA STORAGE AND LOGGING\nStores processed files and results.\n\nGoogle Drive:\nStores original attachments\n\nGoogle Sheets:\nLogs structured results for reporting and tracking\n",
+        "height": 208,
+        "width": 496
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1360,
+        -32
+      ],
+      "typeVersion": 1,
+      "id": "6fa5e3b7-c89f-4cb8-9cb0-f004455b80c3",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "inputDataFieldName": "=data",
+        "name": "=={{ $json.fileName || 'factura_' + $now.format('yyyy-MM-dd_HHmmss') + '.pdf' }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive",
+          "cachedResultUrl": "REPLACE_WITH_YOUR_DRIVE_URL"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_RESOURCE_ID",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        16,
+        240
+      ],
+      "id": "1f66d082-8482-48e0-915b-4747eaf86fd7",
+      "name": "Google Drive — Store Unsupported Attachments"
+    },
+    {
+      "parameters": {
+        "content": "## UNSUPPORTED FILE STORAGE\nStores attachments that are not supported for OCR processing.\nIncludes:\n\n• Word documents\n• Excel files\n• ZIP files\n• Other unsupported formats\n\nEnsures no incoming data is lost and maintains full traceability.\n",
+        "height": 272,
+        "width": 352
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        192,
+        176
+      ],
+      "typeVersion": 1,
+      "id": "36c8372f-2ece-428d-ab6a-74f0a6b1a34c",
+      "name": "Sticky Note6"
+    },
+    {
+      "parameters": {
+        "content": "# AI DOCUMENT INTELLIGENCE AUTOMATION\nEnd-to-end automation that processes incoming emails, extracts document data using OCR, analyzes content with AI and stores results automatically.\n\nBuilt with n8n and integrated with Google APIs.\n",
+        "height": 224,
+        "width": 592
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -944,
+        -448
+      ],
+      "typeVersion": 1,
+      "id": "6f16906c-8dee-45f7-975f-b6570812ecde",
+      "name": "Sticky Note7"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail — Watch Incoming Emails": {
+      "main": [
+        [
+          {
+            "node": "Gmail — Retrieve Full Email Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail — Retrieve Full Email Data": {
+      "main": [
+        [
+          {
+            "node": "Preprocess Email Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preprocess Email Data": {
+      "main": [
+        [
+          {
+            "node": "Classify Email Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Email Type": {
+      "main": [
+        [
+          {
+            "node": "OCR — Extract Text from Attachment",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Google Drive — Store Unsupported Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Google Drive — Store Unsupported Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Google Drive — Store Unsupported Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OCR — Extract Text from Attachment": {
+      "main": [
+        [
+          {
+            "node": "Process OCR Response1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process OCR Response1": {
+      "main": [
+        [
+          {
+            "node": "AI — Analyze Document Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI — Analyze Document Content": {
+      "main": [
+        [
+          {
+            "node": "Prepare Structured Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Structured Data": {
+      "main": [
+        [
+          {
+            "node": "Validate Processing Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Processing Result": {
+      "main": [
+        [
+          {
+            "node": "Google Drive — Save Attachment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Google Sheets — Register Processed Document",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Google Sheets — Register Empty / Error Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Drive — Store Unsupported Attachments": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "tags": []
+}

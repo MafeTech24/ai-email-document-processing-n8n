@@ -1,0 +1,34 @@
+# Environment variables
+.env
+.env.local
+.env.production
+
+# n8n credentials exports
+*.credentials.json
+
+# Logs
+logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Node
+node_modules/
+
+# Temporary
+tmp/
+temp/
+
+# Backup
+*.bak
+*.backup
+
+# Secrets
+secrets.json
+config.json
