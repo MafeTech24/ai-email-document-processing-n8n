@@ -135,7 +135,6 @@ n8n Developer
 
 ## Proyectos
 
-Live Portfolio:
+https://showcase-de-automatizaciones-y-webs.vercel.app/
 
-showcase-de-automatizaciones-y-webs.vercel.app
 ---
