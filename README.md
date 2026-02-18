@@ -133,8 +133,6 @@ Automation Developer
 AI Automation Specialist  
 n8n Developer  
 
-## Proyectos
-
-https://showcase-de-automatizaciones-y-webs.vercel.app/
-
+> Showcase de proyectos: https://showcase-de-automatizaciones-y-webs.vercel.app/
 ---
+
